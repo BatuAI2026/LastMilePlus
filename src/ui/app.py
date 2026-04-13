@@ -203,7 +203,12 @@ if not filtered.empty:
     latest = filtered.iloc[-1]
 
     soh = float(latest["stock_on_hand"])
-    last_dist = float(latest["consumption"])
+   last_distribution = st.number_input(
+    "Enter last distribution quantity (previous month)",
+    min_value=0.0,
+    value=0.0,
+    help="Enter quantity distributed in the last cycle (e.g., March distribution for April planning)"
+)
 
     projected_soh = max(soh + last_dist - amc, 0)
 
