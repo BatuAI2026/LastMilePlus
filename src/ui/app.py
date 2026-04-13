@@ -125,7 +125,56 @@ commodity_id = filtered["commodity_id"].iloc[0] if not filtered.empty else None
 # -----------------------------
 # MOS summary
 # -----------------------------
-st.subheader("Current stock position")
+# -----------------------------
+# Distribution Planning (Delayed LMIS logic)
+# -----------------------------
+st.subheader("Distribution Planning (Delayed LMIS)")
+
+if filtered.empty:
+    st.warning("No matching records found.")
+else:
+    # Sort by period (important if multi-month later)
+    filtered_sorted = filtered.sort_values("period").copy()
+
+    # --- AMC (use all available for now; later we limit to last 3 months)
+    amc = filtered_sorted["consumption"].mean()
+
+    # --- Latest reported values (assumed end of last reported month)
+    latest_row = filtered_sorted.iloc[-1]
+    latest_soh = float(latest_row["stock_on_hand"])
+    last_distribution = float(latest_row["consumption"])  # proxy using Quantity Issued
+
+    # --- Project next month consumption
+    projected_consumption = amc
+
+    # --- Projected end-month SOH
+    projected_end_month_soh = max(
+        latest_soh + last_distribution - projected_consumption,
+        0
+    )
+
+    # --- Target MOS (user-controlled)
+    target_mos = st.number_input("Target MOS", min_value=1.0, max_value=12.0, value=3.0)
+
+    # --- Recommended quantity
+    recommended_qty = max(
+        (target_mos * amc) - projected_end_month_soh,
+        0
+    )
+
+    # -----------------------------
+    # Display results
+    # -----------------------------
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Latest SOH", f"{latest_soh:,.0f}")
+    c2.metric("AMC", f"{amc:,.1f}")
+    c3.metric("Last Distribution", f"{last_distribution:,.0f}")
+    c4.metric("Projected Consumption", f"{projected_consumption:,.1f}")
+
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Projected End-Month SOH", f"{projected_end_month_soh:,.1f}")
+    c6.metric("Target MOS", f"{target_mos:.1f}")
+    c7.metric("Recommended Qty", f"{recommended_qty:,.0f}")
 
 if filtered.empty:
     st.warning("No matching records found.")
