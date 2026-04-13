@@ -72,7 +72,12 @@ df = raw_df[list(required_columns.keys())].copy()
 df.rename(columns=required_columns, inplace=True)
 
 # Add dummy period for now
-df["period"] = "Latest"
+reporting_month = st.text_input(
+    "Enter reporting month (YYYY-MM)",
+    value="2026-02"
+)
+
+df["period"] = reporting_month
 
 # Clean numeric fields
 df["consumption"] = pd.to_numeric(df["consumption"], errors="coerce").fillna(0)
