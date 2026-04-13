@@ -556,8 +556,8 @@ n5.metric("Unallocated Stock Balance", f"{remaining_stock:,.0f}")
 
 st.write("**Allocation method:** Priority-based allocation (lowest projected MOS first)")
 
-  st.subheader("Constrained Facility Allocation Table")
-  st.dataframe(constrained_df, use_container_width=True)
+st.subheader("Constrained Facility Allocation Table")
+st.dataframe(constrained_df, use_container_width=True)
 
 constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
 st.download_button(
