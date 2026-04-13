@@ -21,8 +21,8 @@ st.set_page_config(page_title="LastMile+", layout="wide")
 
 st.title("LastMile+ | AI-Powered Distribution Planning")
 st.write(
-    "Decision-support tool for forecasting demand and identifying stockout risk "
-    "for health commodities."
+    "Decision-support tool for forecasting demand, identifying stockout risk, "
+    "and reviewing Months of Stock (MOS) for health commodities."
 )
 
 sample_path = ROOT_DIR / "data" / "sample" / "sample_consumption.csv"
@@ -33,6 +33,35 @@ if not sample_path.exists():
 
 df = pd.read_csv(sample_path)
 
+# -----------------------------
+# Helper functions
+# -----------------------------
+def calculate_amc(history_df: pd.DataFrame) -> float:
+    """Average monthly consumption using available historical records."""
+    if history_df.empty:
+        return 0.0
+    return float(history_df["consumption"].fillna(0).mean())
+
+def calculate_mos(stock_on_hand: float, amc: float) -> float:
+    """Months of stock."""
+    if amc <= 0:
+        return 0.0
+    return float(stock_on_hand) / float(amc)
+
+def classify_mos(mos: float) -> str:
+    """MOS category using facility-level target bands."""
+    if mos < 1:
+        return "Stockout risk"
+    elif mos < 2:
+        return "Understock"
+    elif mos <= 3:
+        return "Optimal"
+    else:
+        return "Overstock"
+
+# -----------------------------
+# Data preview
+# -----------------------------
 st.subheader("Sample data preview")
 st.dataframe(df.head(20), use_container_width=True)
 
@@ -52,12 +81,37 @@ filtered = df[
     (df["commodity_name"] == selected_commodity)
 ].copy()
 
+filtered = filtered.sort_values("period").reset_index(drop=True)
+
 st.subheader("Historical records")
 st.dataframe(filtered, use_container_width=True)
 
 facility_id = filtered["facility_id"].iloc[0] if not filtered.empty else None
 commodity_id = filtered["commodity_id"].iloc[0] if not filtered.empty else None
 
+# -----------------------------
+# MOS summary
+# -----------------------------
+st.subheader("Current stock position")
+
+if filtered.empty:
+    st.warning("No matching records found.")
+else:
+    latest_row = filtered.iloc[-1]
+    current_soh = float(latest_row["stock_on_hand"])
+    amc = calculate_amc(filtered)
+    mos = calculate_mos(current_soh, amc)
+    mos_status = classify_mos(mos)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Current SOH", f"{current_soh:,.0f}")
+    m2.metric("AMC", f"{amc:,.1f}")
+    m3.metric("MOS", f"{mos:.2f}")
+    m4.metric("MOS Status", mos_status)
+
+# -----------------------------
+# Tabs
+# -----------------------------
 tab1, tab2 = st.tabs(["Forecast", "Risk scoring"])
 
 with tab1:
@@ -91,12 +145,26 @@ with tab2:
             (risk_df["commodity_id"] == commodity_id)
         ].copy()
 
+        if not risk_filtered.empty:
+            risk_filtered = risk_filtered.sort_values("period").copy()
+
+            # Add AMC, MOS, and MOS status
+            risk_filtered["amc"] = amc
+            risk_filtered["mos"] = risk_filtered.apply(
+                lambda row: calculate_mos(row["stock_on_hand"], amc), axis=1
+            )
+            risk_filtered["mos_status"] = risk_filtered["mos"].apply(classify_mos)
+            risk_filtered["mos"] = risk_filtered["mos"].round(2)
+
         cols_to_show = [
             "facility_name",
             "commodity_name",
             "period",
             "consumption",
             "stock_on_hand",
+            "amc",
+            "mos",
+            "mos_status",
             "days_stock_out",
             "days_of_stock",
             "risk_score",
