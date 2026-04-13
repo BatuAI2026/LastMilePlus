@@ -556,18 +556,18 @@ n5.metric("Unallocated Stock Balance", f"{remaining_stock:,.0f}")
 
 st.write("**Allocation method:** Priority-based allocation (lowest projected MOS first)")
 
-        st.subheader("Constrained Facility Allocation Table")
-        st.dataframe(constrained_df, use_container_width=True)
+  st.subheader("Constrained Facility Allocation Table")
+  st.dataframe(constrained_df, use_container_width=True)
 
-        constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download constrained allocation table as CSV",
-            data=constrained_csv,
-            file_name="constrained_allocation_table.csv",
-            mime="text/csv",
+constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
+st.download_button(
+    label="Download constrained allocation table as CSV",
+        data=constrained_csv,
+        file_name="constrained_allocation_table.csv",
+        mime="text/csv",
         )
 
-        st.subheader("District Aggregation")
+st.subheader("District Aggregation")
 
         district_summary = (
             constrained_df.groupby(["district", "commodity_name"], as_index=False)
