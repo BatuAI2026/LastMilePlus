@@ -22,4 +22,4 @@
 ```bash
 pip install -e .
 streamlit run src/ui/app.py
-Update README with full project description
+
