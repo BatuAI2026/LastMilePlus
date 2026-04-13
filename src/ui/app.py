@@ -4,8 +4,15 @@ A lightweight browser interface for forecasting and stockout risk review.
 """
 
 from pathlib import Path
+import sys
+
 import pandas as pd
 import streamlit as st
+
+# Make project root importable on Streamlit Cloud
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
 
 from src.core.forecasting import DemandForecaster
 from src.core.risk_scoring import StockoutRiskScorer
@@ -18,7 +25,7 @@ st.write(
     "for health commodities."
 )
 
-sample_path = Path("data/sample/sample_consumption.csv")
+sample_path = ROOT_DIR / "data" / "sample" / "sample_consumption.csv"
 
 if not sample_path.exists():
     st.error("Sample data file not found at data/sample/sample_consumption.csv")
