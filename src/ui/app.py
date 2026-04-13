@@ -25,6 +25,9 @@ st.write(
     "and reviewing Months of Stock (MOS) for health commodities."
 )
 
+# -----------------------------
+# Upload LMIS data
+# -----------------------------
 st.subheader("Upload LMIS data")
 
 uploaded_file = st.file_uploader(
@@ -54,17 +57,28 @@ required_columns = {
     "Closing balance (SOH)": "stock_on_hand"
 }
 
+missing_columns = [col for col in required_columns if col not in raw_df.columns]
+if missing_columns:
+    st.error(
+        "The uploaded file is missing these required columns: "
+        + ", ".join(missing_columns)
+    )
+    st.stop()
+
 # Keep only relevant columns
 df = raw_df[list(required_columns.keys())].copy()
 
 # Rename columns to app format
 df.rename(columns=required_columns, inplace=True)
 
-# Add dummy period (for now)
+# Add dummy period for now
 df["period"] = "Latest"
 
+# Clean numeric fields
+df["consumption"] = pd.to_numeric(df["consumption"], errors="coerce").fillna(0)
+df["stock_on_hand"] = pd.to_numeric(df["stock_on_hand"], errors="coerce").fillna(0)
+
 st.success("LMIS data loaded successfully")
-st.dataframe(df.head(20), use_container_width=True)
 
 # -----------------------------
 # Helper functions
@@ -95,7 +109,7 @@ def classify_mos(mos: float) -> str:
 # -----------------------------
 # Data preview
 # -----------------------------
-st.subheader("Sample data preview")
+st.subheader("LMIS data preview")
 st.dataframe(df.head(20), use_container_width=True)
 
 facility_options = sorted(df["facility_name"].dropna().unique().tolist())
@@ -122,9 +136,11 @@ st.dataframe(filtered, use_container_width=True)
 facility_id = filtered["facility_id"].iloc[0] if not filtered.empty else None
 commodity_id = filtered["commodity_id"].iloc[0] if not filtered.empty else None
 
-# -----------------------------
-# MOS summary
-# -----------------------------
+# Default values used later in tabs
+amc = 0.0
+mos = 0.0
+mos_status = "N/A"
+
 # -----------------------------
 # Distribution Planning (Delayed LMIS logic)
 # -----------------------------
@@ -133,63 +149,61 @@ st.subheader("Distribution Planning (Delayed LMIS)")
 if filtered.empty:
     st.warning("No matching records found.")
 else:
-    # Sort by period (important if multi-month later)
     filtered_sorted = filtered.sort_values("period").copy()
 
-    # --- AMC (use all available for now; later we limit to last 3 months)
-    amc = filtered_sorted["consumption"].mean()
+    amc_window = st.selectbox(
+        "AMC calculation period",
+        options=[3, 6, 12],
+        index=0
+    )
 
-    # --- Latest reported values (assumed end of last reported month)
+    recent_data = filtered_sorted.tail(amc_window).copy()
+    months_used = len(recent_data)
+
+    amc = float(recent_data["consumption"].mean()) if not recent_data.empty else 0.0
+    st.caption(f"AMC calculated using the most recent {months_used} month(s) available.")
+
     latest_row = filtered_sorted.iloc[-1]
     latest_soh = float(latest_row["stock_on_hand"])
-    last_distribution = float(latest_row["consumption"])  # proxy using Quantity Issued
 
-    # --- Project next month consumption
+    # Temporary proxy: using Quantity Issued as last distribution
+    last_distribution = float(latest_row["consumption"])
+
     projected_consumption = amc
 
-    # --- Projected end-month SOH
     projected_end_month_soh = max(
         latest_soh + last_distribution - projected_consumption,
         0
     )
 
-    # --- Target MOS (user-controlled)
-    target_mos = st.number_input("Target MOS", min_value=1.0, max_value=12.0, value=3.0)
+    target_mos = st.number_input(
+        "Target MOS",
+        min_value=1.0,
+        max_value=12.0,
+        value=3.0
+    )
 
-    # --- Recommended quantity
     recommended_qty = max(
         (target_mos * amc) - projected_end_month_soh,
         0
     )
 
-    # -----------------------------
-    # Display results
-    # -----------------------------
+    mos = calculate_mos(latest_soh, amc)
+    mos_status = classify_mos(mos)
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Latest SOH", f"{latest_soh:,.0f}")
     c2.metric("AMC", f"{amc:,.1f}")
     c3.metric("Last Distribution", f"{last_distribution:,.0f}")
     c4.metric("Projected Consumption", f"{projected_consumption:,.1f}")
 
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     c5.metric("Projected End-Month SOH", f"{projected_end_month_soh:,.1f}")
     c6.metric("Target MOS", f"{target_mos:.1f}")
     c7.metric("Recommended Qty", f"{recommended_qty:,.0f}")
+    c8.metric("Current MOS", f"{mos:.2f}")
 
-if filtered.empty:
-    st.warning("No matching records found.")
-else:
-    latest_row = filtered.iloc[-1]
-    current_soh = float(latest_row["stock_on_hand"])
-    amc = calculate_amc(filtered)
-    mos = calculate_mos(current_soh, amc)
-    mos_status = classify_mos(mos)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Current SOH", f"{current_soh:,.0f}")
-    m2.metric("AMC", f"{amc:,.1f}")
-    m3.metric("MOS", f"{mos:.2f}")
-    m4.metric("MOS Status", mos_status)
+    st.write(f"**MOS Status:** {mos_status}")
 
 # -----------------------------
 # Tabs
@@ -229,8 +243,6 @@ with tab2:
 
         if not risk_filtered.empty:
             risk_filtered = risk_filtered.sort_values("period").copy()
-
-            # Add AMC, MOS, and MOS status
             risk_filtered["amc"] = amc
             risk_filtered["mos"] = risk_filtered.apply(
                 lambda row: calculate_mos(row["stock_on_hand"], amc), axis=1
