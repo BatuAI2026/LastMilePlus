@@ -1,7 +1,8 @@
 """
 LastMile+ - Simple Streamlit UI
 A lightweight browser interface for forecasting, stockout risk review,
-and delayed-LMIS distribution planning.
+delayed-LMIS distribution planning, priority-based allocation,
+and FEFO warehouse collection guidance with batch traceability.
 """
 
 from pathlib import Path
@@ -23,7 +24,8 @@ st.set_page_config(page_title="LastMile+", layout="wide")
 st.title("LastMile+ | AI-Powered Distribution Planning")
 st.write(
     "Decision-support tool for forecasting demand, identifying stockout risk, "
-    "and supporting delayed-LMIS distribution planning for health commodities."
+    "supporting delayed-LMIS distribution planning, constrained allocation, "
+    "and FEFO warehouse collection guidance."
 )
 
 # -------------------------------------------------------------------
@@ -127,6 +129,47 @@ def load_history_file(history_file: Path) -> pd.DataFrame:
     return history_df
 
 
+def clean_warehouse_data(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Expected cleaned warehouse columns:
+    Required:
+      - product_name
+      - expiry_date
+      - available_qty
+    Optional:
+      - warehouse_name
+      - batch_no
+    """
+    df = raw_df.copy()
+    df.columns = [str(col).strip().lower() for col in df.columns]
+
+    required = ["product_name", "expiry_date", "available_qty"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(
+            "Warehouse file is missing required columns: " + ", ".join(missing)
+        )
+
+    if "warehouse_name" not in df.columns:
+        df["warehouse_name"] = "Unknown Warehouse"
+
+    if "batch_no" not in df.columns:
+        df["batch_no"] = "N/A"
+
+    df["product_name"] = df["product_name"].astype(str).str.strip()
+    df["warehouse_name"] = df["warehouse_name"].astype(str).str.strip()
+    df["batch_no"] = df["batch_no"].astype(str).str.strip()
+
+    df["expiry_date"] = pd.to_datetime(df["expiry_date"], errors="coerce")
+    df["available_qty"] = pd.to_numeric(df["available_qty"], errors="coerce").fillna(0)
+
+    df = df[df["expiry_date"].notna()].copy()
+    df = df[df["available_qty"] > 0].copy()
+
+    df = df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
+    return df
+
+
 def calculate_amc(history_df: pd.DataFrame) -> float:
     if history_df.empty:
         return 0.0
@@ -213,6 +256,7 @@ def build_planning_table(
 
         current_mos = calculate_mos(latest_soh, amc)
         mos_status = classify_mos(current_mos)
+        projected_mos = calculate_mos(projected_end_month_soh, amc)
 
         planning_rows.append(
             {
@@ -229,6 +273,7 @@ def build_planning_table(
                 "last_distribution_qty": round(last_distribution_qty, 2),
                 "projected_consumption": round(projected_consumption, 2),
                 "projected_end_month_soh": round(projected_end_month_soh, 2),
+                "projected_mos": round(projected_mos, 2),
                 "target_mos": round(target_mos, 2),
                 "current_mos": round(current_mos, 2),
                 "mos_status": mos_status,
@@ -247,12 +292,7 @@ def build_planning_table(
 
 
 def assign_priority(projected_end_month_soh: float, amc: float) -> int:
-    """
-    Assign allocation priority based on projected MOS.
-    Lower projected MOS = higher priority.
-    """
     projected_mos = calculate_mos(projected_end_month_soh, amc)
-
     if projected_mos < 1:
         return 1
     elif projected_mos < 2:
@@ -264,11 +304,6 @@ def assign_priority(projected_end_month_soh: float, amc: float) -> int:
 
 
 def apply_priority_stock_constraint(planning_df: pd.DataFrame, available_stock: float) -> pd.DataFrame:
-    """
-    Allocate available national stock by priority:
-    Priority 1 first, then 2, then 3, then 4.
-    Within each priority, allocate in descending recommended quantity.
-    """
     if planning_df.empty:
         return planning_df.copy()
 
@@ -310,6 +345,88 @@ def apply_priority_stock_constraint(planning_df: pd.DataFrame, available_stock: 
     return constrained_df
 
 
+def filter_matching_warehouse_stock(warehouse_df: pd.DataFrame, selected_commodity: str) -> pd.DataFrame:
+    """
+    Temporary name-based match.
+    Later, a product-code mapping would be better.
+    """
+    if warehouse_df.empty:
+        return warehouse_df.copy()
+
+    stock_df = warehouse_df[
+        warehouse_df["product_name"].str.contains(selected_commodity, case=False, na=False)
+    ].copy()
+
+    stock_df = stock_df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
+    return stock_df
+
+
+def apply_fefo_collection_guidance(
+    constrained_df: pd.DataFrame,
+    warehouse_df: pd.DataFrame,
+    selected_commodity: str,
+) -> pd.DataFrame:
+    """
+    Assign allocated facility quantities to warehouse batches using FEFO.
+    Returns batch-level traceability guidance.
+    """
+    if constrained_df.empty or warehouse_df.empty:
+        return pd.DataFrame()
+
+    stock_df = filter_matching_warehouse_stock(warehouse_df, selected_commodity)
+
+    if stock_df.empty:
+        return pd.DataFrame()
+
+    facility_df = constrained_df.copy()
+    facility_df = facility_df[facility_df["allocated_qty"] > 0].copy()
+
+    if facility_df.empty:
+        return pd.DataFrame()
+
+    facility_df = facility_df.sort_values(
+        by=["priority", "allocated_qty"],
+        ascending=[True, False]
+    ).reset_index(drop=True)
+
+    allocations = []
+    stock_idx = 0
+    remaining_batch_qty = float(stock_df.loc[stock_idx, "available_qty"])
+
+    for _, facility_row in facility_df.iterrows():
+        needed_qty = float(facility_row["allocated_qty"])
+
+        while needed_qty > 0 and stock_idx < len(stock_df):
+            batch_row = stock_df.loc[stock_idx]
+            allocate_qty = min(needed_qty, remaining_batch_qty)
+
+            allocations.append(
+                {
+                    "district": facility_row["district"],
+                    "facility_id": facility_row["facility_id"],
+                    "facility_name": facility_row["facility_name"],
+                    "commodity_name": facility_row["commodity_name"],
+                    "allocated_qty_to_facility": round(float(facility_row["allocated_qty"]), 2),
+                    "priority": int(facility_row["priority"]),
+                    "source_warehouse": batch_row["warehouse_name"],
+                    "batch_no": batch_row["batch_no"],
+                    "expiry_date": batch_row["expiry_date"].strftime("%Y-%m-%d"),
+                    "batch_allocated_qty": round(float(allocate_qty), 2),
+                    "collection_note": f"To be collected from {batch_row['warehouse_name']}",
+                }
+            )
+
+            needed_qty -= allocate_qty
+            remaining_batch_qty -= allocate_qty
+
+            if remaining_batch_qty <= 0:
+                stock_idx += 1
+                if stock_idx < len(stock_df):
+                    remaining_batch_qty = float(stock_df.loc[stock_idx, "available_qty"])
+
+    return pd.DataFrame(allocations)
+
+
 # -------------------------------------------------------------------
 # Load repository history
 # -------------------------------------------------------------------
@@ -328,7 +445,7 @@ except Exception as e:
     st.stop()
 
 # -------------------------------------------------------------------
-# Upload latest month
+# Upload latest LMIS month
 # -------------------------------------------------------------------
 st.subheader("Upload latest LMIS month")
 
@@ -363,6 +480,33 @@ try:
 except Exception as e:
     st.error(f"Could not process uploaded LMIS file: {e}")
     st.stop()
+
+# -------------------------------------------------------------------
+# Upload warehouse stock for FEFO guidance
+# -------------------------------------------------------------------
+st.subheader("Upload warehouse stock (FEFO)")
+
+warehouse_file = st.file_uploader(
+    "Upload cleaned warehouse stock file",
+    type=["csv", "xlsx"],
+    key="warehouse_upload"
+)
+
+warehouse_df = pd.DataFrame()
+
+if warehouse_file is not None:
+    try:
+        if warehouse_file.name.endswith(".csv"):
+            raw_warehouse_df = pd.read_csv(warehouse_file)
+        else:
+            raw_warehouse_df = pd.read_excel(warehouse_file)
+
+        warehouse_df = clean_warehouse_data(raw_warehouse_df)
+        st.success(f"Warehouse stock loaded: {len(warehouse_df):,} batch row(s)")
+        st.dataframe(warehouse_df, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not process warehouse stock file: {e}")
+        st.stop()
 
 # -------------------------------------------------------------------
 # Combine repo history + latest upload
@@ -459,7 +603,6 @@ else:
     )
 
     projected_consumption = amc
-
     projected_end_month_soh = max(
         latest_soh + last_distribution - projected_consumption,
         0
@@ -498,7 +641,7 @@ else:
     st.write(f"**MOS Status:** {mos_status}")
 
 # -------------------------------------------------------------------
-# Planning Table + District Aggregation + National Constraint
+# Planning Table + Priority Allocation + FEFO Guidance
 # -------------------------------------------------------------------
 st.subheader("Planning Table for Selected Product")
 
@@ -519,10 +662,10 @@ else:
     else:
         st.dataframe(planning_df, use_container_width=True)
 
-        csv_data = planning_df.to_csv(index=False).encode("utf-8")
+        planning_csv = planning_df.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download planning table as CSV",
-            data=csv_data,
+            data=planning_csv,
             file_name="planning_table.csv",
             mime="text/csv",
         )
@@ -539,37 +682,41 @@ else:
         )
 
         constrained_df = apply_priority_stock_constraint(
-    planning_df=planning_df,
-    available_stock=available_national_stock,
-)
+            planning_df=planning_df,
+            available_stock=available_national_stock,
+        )
 
         total_allocated = float(constrained_df["allocated_qty"].sum())
         total_gap = float(constrained_df["gap_qty"].sum())
-        remaining_stock = float(constrained_df["remaining_stock_after_allocation"].iloc[0]) if not constrained_df.empty else 0.0
-
-n1, n2, n3, n4, n5 = st.columns(5)
-n1.metric("Total Recommended Qty", f"{total_recommended:,.0f}")
-n2.metric("Available National Stock", f"{available_national_stock:,.0f}")
-n3.metric("Total Allocated Qty", f"{total_allocated:,.0f}")
-n4.metric("Total Gap Qty", f"{total_gap:,.0f}")
-n5.metric("Unallocated Stock Balance", f"{remaining_stock:,.0f}")
-
-st.write("**Allocation method:** Priority-based allocation (lowest projected MOS first)")
-
-st.subheader("Constrained Facility Allocation Table")
-st.dataframe(constrained_df, use_container_width=True)
-
-constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="Download constrained allocation table as CSV",
-        data=constrained_csv,
-        file_name="constrained_allocation_table.csv",
-        mime="text/csv",
+        remaining_stock = (
+            float(constrained_df["remaining_stock_after_allocation"].iloc[0])
+            if not constrained_df.empty
+            else 0.0
         )
 
-st.subheader("District Aggregation")
+        n1, n2, n3, n4, n5 = st.columns(5)
+        n1.metric("Total Recommended Qty", f"{total_recommended:,.0f}")
+        n2.metric("Available National Stock", f"{available_national_stock:,.0f}")
+        n3.metric("Total Allocated Qty", f"{total_allocated:,.0f}")
+        n4.metric("Total Gap Qty", f"{total_gap:,.0f}")
+        n5.metric("Unallocated Stock Balance", f"{remaining_stock:,.0f}")
 
-    district_summary = (
+        st.write("**Allocation method:** Priority-based allocation (lowest projected MOS first)")
+
+        st.subheader("Constrained Facility Allocation Table")
+        st.dataframe(constrained_df, use_container_width=True)
+
+        constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download constrained allocation table as CSV",
+            data=constrained_csv,
+            file_name="constrained_allocation_table.csv",
+            mime="text/csv",
+        )
+
+        st.subheader("District Aggregation")
+
+        district_summary = (
             constrained_df.groupby(["district", "commodity_name"], as_index=False)
             .agg(
                 facilities=("facility_id", "nunique"),
@@ -591,6 +738,36 @@ st.subheader("District Aggregation")
             district_summary[col] = district_summary[col].round(2)
 
         st.dataframe(district_summary, use_container_width=True)
+
+        # ---------------------------------------------------------------
+        # FEFO Warehouse Collection Guidance with Batch Traceability
+        # ---------------------------------------------------------------
+        st.subheader("FEFO Warehouse Collection Guidance")
+
+        if warehouse_df.empty:
+            st.info("Upload cleaned warehouse stock data to enable FEFO warehouse collection guidance.")
+        else:
+            fefo_df = apply_fefo_collection_guidance(
+                constrained_df=constrained_df,
+                warehouse_df=warehouse_df,
+                selected_commodity=selected_commodity,
+            )
+
+            if fefo_df.empty:
+                st.warning(
+                    "No matching warehouse stock rows found for the selected product. "
+                    "Check product naming consistency between LMIS and warehouse data."
+                )
+            else:
+                st.dataframe(fefo_df, use_container_width=True)
+
+                fefo_csv = fefo_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="Download FEFO warehouse guidance as CSV",
+                    data=fefo_csv,
+                    file_name="fefo_warehouse_guidance.csv",
+                    mime="text/csv",
+                )
 
 # -------------------------------------------------------------------
 # Tabs
