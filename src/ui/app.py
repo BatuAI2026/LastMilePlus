@@ -29,7 +29,7 @@ st.write(
 # -------------------------------------------------------------------
 # Configuration
 # -------------------------------------------------------------------
-HISTORY_FILE = ROOT_DIR / "data" / "history" / "lmis_history.csv"
+HISTORY_FILE = ROOT_DIR / "data" / "history" / "lmis_history.csv" 
 
 REQUIRED_COLUMNS = {
     "District": "district",
