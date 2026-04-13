@@ -7,6 +7,7 @@ and FEFO warehouse collection guidance with batch traceability.
 
 from pathlib import Path
 import sys
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -52,9 +53,83 @@ MOS_SCENARIOS = {
     "1.0 MOS": 1.0,
 }
 
+LMIS_PRODUCT_MAP = {
+    "BB006000": "Artesunate injection 60mg/ml, 1ML",
+    "TBA4": "Artesunate injection 120mg/ml, PFR",
+    "GF0561": "Artesunate 50mg + Amodiaquine 135mg (3 Tabs)",
+    "GF0562": "Artesunate 100mg + Amodiaquine 270mg (3 Tabs)",
+    "GF0563": "Artesunate 100mg + Amodiaquine 270mg (6 Tabs)",
+    "GF5637": "Dihydroartemisinin 20mg / Piperaquine 160mg",
+    "GF5639": "Dihydroartemisinin 60mg / Piperaquine 480mg",
+    "GF5640": "Dihydroartemisinin 80mg / Piperaquine 640mg",
+    "PMI0004": "Long Lasting Insecticidal Net (LLIN)",
+    "DN002900": "Malaria Rapid Diagnostic Test (MRDT) Kits",
+    "AA058200": "Sulphadoxine / Pyrimethamine (SP) tablets",
+}
+
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
+def standardize_product_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add standardized product name based on LMIS product code.
+    """
+    df = df.copy()
+
+    if "commodity_id" in df.columns:
+        df["commodity_id"] = df["commodity_id"].astype(str).str.strip()
+        df["standard_product_name"] = df["commodity_id"].map(LMIS_PRODUCT_MAP)
+        df["standard_product_name"] = df["standard_product_name"].fillna(df["commodity_name"])
+
+    return df
+
+
+def standardize_warehouse_product_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add standardized warehouse product field.
+    If product_code exists, use LMIS_PRODUCT_MAP.
+    Otherwise fall back to product_name.
+    """
+    df = df.copy()
+
+    if "product_code" in df.columns:
+        df["product_code"] = df["product_code"].astype(str).str.strip()
+        df["standard_product_name"] = df["product_code"].map(LMIS_PRODUCT_MAP)
+        df["standard_product_name"] = df["standard_product_name"].fillna(df["product_name"])
+    else:
+        df["standard_product_name"] = df["product_name"]
+
+    return df
+
+
+def create_excel_workbook(
+    planning_df: pd.DataFrame,
+    constrained_df: pd.DataFrame,
+    district_summary: pd.DataFrame,
+    fefo_df: pd.DataFrame
+) -> bytes:
+    """
+    Create an Excel workbook with multiple sheets.
+    """
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        if not planning_df.empty:
+            planning_df.to_excel(writer, sheet_name="Planning_Table", index=False)
+
+        if not constrained_df.empty:
+            constrained_df.to_excel(writer, sheet_name="Constrained_Allocation", index=False)
+
+        if not district_summary.empty:
+            district_summary.to_excel(writer, sheet_name="District_Summary", index=False)
+
+        if not fefo_df.empty:
+            fefo_df.to_excel(writer, sheet_name="FEFO_Guidance", index=False)
+
+    output.seek(0)
+    return output.getvalue()
+
+
 def standardize_lmis_columns(raw_df: pd.DataFrame) -> pd.DataFrame:
     missing_columns = [col for col in REQUIRED_COLUMNS if col not in raw_df.columns]
     if missing_columns:
@@ -79,6 +154,8 @@ def standardize_lmis_columns(raw_df: pd.DataFrame) -> pd.DataFrame:
     ]
     for col in text_cols:
         df[col] = df[col].astype(str).str.strip()
+
+    df = standardize_product_fields(df)
 
     return df
 
@@ -126,6 +203,8 @@ def load_history_file(history_file: Path) -> pd.DataFrame:
     ]:
         history_df[col] = history_df[col].astype(str).str.strip()
 
+    history_df = standardize_product_fields(history_df)
+
     return history_df
 
 
@@ -139,6 +218,7 @@ def clean_warehouse_data(raw_df: pd.DataFrame) -> pd.DataFrame:
     Optional:
       - warehouse_name
       - batch_no
+      - product_code
     """
     df = raw_df.copy()
     df.columns = [str(col).strip().lower() for col in df.columns]
@@ -156,15 +236,21 @@ def clean_warehouse_data(raw_df: pd.DataFrame) -> pd.DataFrame:
     if "batch_no" not in df.columns:
         df["batch_no"] = "N/A"
 
+    if "product_code" not in df.columns:
+        df["product_code"] = ""
+
     df["product_name"] = df["product_name"].astype(str).str.strip()
     df["warehouse_name"] = df["warehouse_name"].astype(str).str.strip()
     df["batch_no"] = df["batch_no"].astype(str).str.strip()
+    df["product_code"] = df["product_code"].astype(str).str.strip()
 
     df["expiry_date"] = pd.to_datetime(df["expiry_date"], errors="coerce")
     df["available_qty"] = pd.to_numeric(df["available_qty"], errors="coerce").fillna(0)
 
     df = df[df["expiry_date"].notna()].copy()
     df = df[df["available_qty"] > 0].copy()
+
+    df = standardize_warehouse_product_fields(df)
 
     df = df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
     return df
@@ -226,12 +312,28 @@ def build_planning_table(
     planning_rows = []
 
     grouped = df_product.groupby(
-        ["district", "facility_id", "facility_name", "commodity_id", "commodity_name", "unit"],
+        [
+            "district",
+            "facility_id",
+            "facility_name",
+            "commodity_id",
+            "commodity_name",
+            "unit",
+            "standard_product_name",
+        ],
         dropna=False
     )
 
     for keys, group in grouped:
-        district, facility_id, facility_name, commodity_id, commodity_name, unit = keys
+        (
+            district,
+            facility_id,
+            facility_name,
+            commodity_id,
+            commodity_name,
+            unit,
+            standard_product_name,
+        ) = keys
 
         group = group.sort_values("period_date").copy()
         recent_data = group.tail(amc_window).copy()
@@ -265,6 +367,7 @@ def build_planning_table(
                 "facility_name": facility_name,
                 "commodity_id": commodity_id,
                 "commodity_name": commodity_name,
+                "standard_product_name": standard_product_name,
                 "unit": unit,
                 "latest_period": latest_period,
                 "months_used_for_amc": months_used,
@@ -345,17 +448,26 @@ def apply_priority_stock_constraint(planning_df: pd.DataFrame, available_stock: 
     return constrained_df
 
 
-def filter_matching_warehouse_stock(warehouse_df: pd.DataFrame, selected_commodity: str) -> pd.DataFrame:
+def filter_matching_warehouse_stock(
+    warehouse_df: pd.DataFrame,
+    selected_commodity: str,
+    selected_standard_name: str
+) -> pd.DataFrame:
     """
-    Temporary name-based match.
-    Later, a product-code mapping would be better.
+    Prefer standardized product matching.
+    Fall back to product_name contains if needed.
     """
     if warehouse_df.empty:
         return warehouse_df.copy()
 
     stock_df = warehouse_df[
-        warehouse_df["product_name"].str.contains(selected_commodity, case=False, na=False)
+        warehouse_df["standard_product_name"].astype(str).str.strip() == str(selected_standard_name).strip()
     ].copy()
+
+    if stock_df.empty:
+        stock_df = warehouse_df[
+            warehouse_df["product_name"].str.contains(selected_commodity, case=False, na=False)
+        ].copy()
 
     stock_df = stock_df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
     return stock_df
@@ -365,6 +477,7 @@ def apply_fefo_collection_guidance(
     constrained_df: pd.DataFrame,
     warehouse_df: pd.DataFrame,
     selected_commodity: str,
+    selected_standard_name: str,
 ) -> pd.DataFrame:
     """
     Assign allocated facility quantities to warehouse batches using FEFO.
@@ -373,7 +486,11 @@ def apply_fefo_collection_guidance(
     if constrained_df.empty or warehouse_df.empty:
         return pd.DataFrame()
 
-    stock_df = filter_matching_warehouse_stock(warehouse_df, selected_commodity)
+    stock_df = filter_matching_warehouse_stock(
+        warehouse_df=warehouse_df,
+        selected_commodity=selected_commodity,
+        selected_standard_name=selected_standard_name,
+    )
 
     if stock_df.empty:
         return pd.DataFrame()
@@ -405,7 +522,9 @@ def apply_fefo_collection_guidance(
                     "district": facility_row["district"],
                     "facility_id": facility_row["facility_id"],
                     "facility_name": facility_row["facility_name"],
+                    "commodity_id": facility_row["commodity_id"],
                     "commodity_name": facility_row["commodity_name"],
+                    "standard_product_name": facility_row["standard_product_name"],
                     "allocated_qty_to_facility": round(float(facility_row["allocated_qty"]), 2),
                     "priority": int(facility_row["priority"]),
                     "source_warehouse": batch_row["warehouse_name"],
@@ -541,6 +660,12 @@ filtered = df[
 
 filtered = filtered.sort_values("period_date").reset_index(drop=True)
 
+selected_standard_name = (
+    filtered["standard_product_name"].iloc[0]
+    if not filtered.empty and "standard_product_name" in filtered.columns
+    else selected_commodity
+)
+
 st.subheader("Historical records")
 st.dataframe(
     filtered[
@@ -551,6 +676,7 @@ st.dataframe(
             "facility_name",
             "commodity_id",
             "commodity_name",
+            "standard_product_name",
             "unit",
             "consumption",
             "stock_on_hand",
@@ -568,6 +694,10 @@ mos_status = "N/A"
 last_distribution = 0.0
 target_mos = 3.0
 amc_window = 3
+fefo_df = pd.DataFrame()
+planning_df = pd.DataFrame()
+constrained_df = pd.DataFrame()
+district_summary = pd.DataFrame()
 
 # -------------------------------------------------------------------
 # Distribution Planning (Single Facility)
@@ -751,6 +881,7 @@ else:
                 constrained_df=constrained_df,
                 warehouse_df=warehouse_df,
                 selected_commodity=selected_commodity,
+                selected_standard_name=selected_standard_name,
             )
 
             if fefo_df.empty:
@@ -768,6 +899,25 @@ else:
                     file_name="fefo_warehouse_guidance.csv",
                     mime="text/csv",
                 )
+
+        # ---------------------------------------------------------------
+        # Excel Export
+        # ---------------------------------------------------------------
+        st.subheader("Excel Export")
+
+        excel_bytes = create_excel_workbook(
+            planning_df=planning_df,
+            constrained_df=constrained_df,
+            district_summary=district_summary,
+            fefo_df=fefo_df,
+        )
+
+        st.download_button(
+            label="Download full planning workbook (Excel)",
+            data=excel_bytes,
+            file_name="lastmileplus_planning_workbook.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 # -------------------------------------------------------------------
 # Tabs
