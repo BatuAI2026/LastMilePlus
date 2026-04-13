@@ -194,24 +194,17 @@ st.dataframe(filtered)
 # Planning
 # -------------------------------------------------------------------
 if not filtered.empty:
-
     amc_window = st.selectbox("AMC window", [3, 6, 12])
-
     recent = filtered.tail(amc_window)
     amc = recent["consumption"].mean()
 
     latest = filtered.iloc[-1]
-
     soh = float(latest["stock_on_hand"])
-   last_distribution = st.number_input(
-    "Enter last distribution quantity (previous month)",
-    min_value=0.0,
-    value=0.0,
-    help="Enter quantity distributed in the last cycle (e.g., March distribution for April planning)"
-)
-
+    
+    # Check this line below specifically - make sure it aligns with 'soh' above
+    last_dist = float(latest["consumption"]) 
+    
     projected_soh = max(soh + last_dist - amc, 0)
-
     target_mos = st.number_input("Target MOS", 1.0, 12.0, 3.0)
 
     recommended = max((target_mos * amc) - projected_soh, 0)
