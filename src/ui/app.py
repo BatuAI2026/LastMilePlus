@@ -159,11 +159,14 @@ def prepare_combined_dataset(history_df: pd.DataFrame, latest_df: pd.DataFrame) 
 
     return combined
 
-
 # -------------------------------------------------------------------
 # Load repository history
 # -------------------------------------------------------------------
 st.subheader("Repository history")
+
+st.write(f"ROOT_DIR resolved to: {ROOT_DIR}")
+st.write(f"Looking for history file at: {HISTORY_FILE}")
+st.write(f"History file exists: {HISTORY_FILE.exists()}")
 
 try:
     history_df = load_history_file(HISTORY_FILE)
@@ -175,7 +178,7 @@ try:
     else:
         st.success(
             f"Loaded repository history: {len(history_df):,} rows from "
-            f"`data/history/lmis_history.csv`"
+            f"{HISTORY_FILE}"
         )
 except Exception as e:
     st.error(f"Could not load repository history file: {e}")
