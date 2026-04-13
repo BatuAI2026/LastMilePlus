@@ -42,6 +42,14 @@ REQUIRED_COLUMNS = {
     "Closing balance (SOH)": "stock_on_hand",
 }
 
+MOS_SCENARIOS = {
+    "Target MOS (3.0)": 3.0,
+    "2.5 MOS": 2.5,
+    "2.0 MOS": 2.0,
+    "1.5 MOS": 1.5,
+    "1.0 MOS": 1.0,
+}
+
 # -------------------------------------------------------------------
 # Helper functions
 # -------------------------------------------------------------------
@@ -172,9 +180,6 @@ def build_planning_table(
     last_distribution_qty: float,
     target_mos: float,
 ) -> pd.DataFrame:
-    """
-    Build facility-level planning table for one selected product.
-    """
     planning_rows = []
 
     grouped = df_product.groupby(
@@ -239,6 +244,38 @@ def build_planning_table(
         ).reset_index(drop=True)
 
     return planning_df
+
+
+def apply_national_stock_constraint(planning_df: pd.DataFrame, available_stock: float) -> pd.DataFrame:
+    """
+    Apply a simple proportional allocation under national stock constraint.
+    """
+    if planning_df.empty:
+        return planning_df.copy()
+
+    constrained_df = planning_df.copy()
+    total_recommended = float(constrained_df["recommended_qty"].sum())
+
+    if total_recommended <= 0:
+        constrained_df["allocated_qty"] = 0.0
+        constrained_df["gap_qty"] = 0.0
+        constrained_df["allocation_factor"] = 0.0
+        return constrained_df
+
+    if available_stock >= total_recommended:
+        allocation_factor = 1.0
+    else:
+        allocation_factor = available_stock / total_recommended
+
+    constrained_df["allocation_factor"] = allocation_factor
+    constrained_df["allocated_qty"] = (
+        constrained_df["recommended_qty"] * allocation_factor
+    ).round(0)
+    constrained_df["gap_qty"] = (
+        constrained_df["recommended_qty"] - constrained_df["allocated_qty"]
+    ).round(2)
+
+    return constrained_df
 
 
 # -------------------------------------------------------------------
@@ -354,6 +391,7 @@ mos = 0.0
 mos_status = "N/A"
 last_distribution = 0.0
 target_mos = 3.0
+amc_window = 3
 
 # -------------------------------------------------------------------
 # Distribution Planning (Single Facility)
@@ -395,12 +433,13 @@ else:
         0
     )
 
-    target_mos = st.number_input(
-        "Target MOS",
-        min_value=1.0,
-        max_value=12.0,
-        value=3.0
+    scenario_name = st.selectbox(
+        "Allocation scenario",
+        options=list(MOS_SCENARIOS.keys()),
+        index=0,
+        help="Select the target stock scenario used for planning."
     )
+    target_mos = MOS_SCENARIOS[scenario_name]
 
     recommended_qty = max(
         (target_mos * amc) - projected_end_month_soh,
@@ -420,14 +459,14 @@ else:
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("Projected End-Month SOH", f"{projected_end_month_soh:,.1f}")
-    c6.metric("Target MOS", f"{target_mos:.1f}")
+    c6.metric("Scenario", scenario_name)
     c7.metric("Recommended Qty", f"{recommended_qty:,.0f}")
     c8.metric("Current MOS", f"{mos:.2f}")
 
     st.write(f"**MOS Status:** {mos_status}")
 
 # -------------------------------------------------------------------
-# Planning Table + District Aggregation
+# Planning Table + District Aggregation + National Constraint
 # -------------------------------------------------------------------
 st.subheader("Planning Table for Selected Product")
 
@@ -438,7 +477,7 @@ if product_df.empty:
 else:
     planning_df = build_planning_table(
         df_product=product_df,
-        amc_window=amc_window if "amc_window" in locals() else 3,
+        amc_window=amc_window,
         last_distribution_qty=last_distribution,
         target_mos=target_mos,
     )
@@ -456,21 +495,67 @@ else:
             mime="text/csv",
         )
 
+        st.subheader("National Stock Constraint Allocation")
+
+        total_recommended = float(planning_df["recommended_qty"].sum())
+
+        available_national_stock = st.number_input(
+            "Enter available national stock for this product",
+            min_value=0.0,
+            value=total_recommended,
+            help="Available stock at national level for allocation to facilities."
+        )
+
+        constrained_df = apply_national_stock_constraint(
+            planning_df=planning_df,
+            available_stock=available_national_stock,
+        )
+
+        total_allocated = float(constrained_df["allocated_qty"].sum())
+        total_gap = float(constrained_df["gap_qty"].sum())
+        allocation_factor = float(constrained_df["allocation_factor"].iloc[0]) if not constrained_df.empty else 0.0
+
+        n1, n2, n3, n4 = st.columns(4)
+        n1.metric("Total Recommended Qty", f"{total_recommended:,.0f}")
+        n2.metric("Available National Stock", f"{available_national_stock:,.0f}")
+        n3.metric("Total Allocated Qty", f"{total_allocated:,.0f}")
+        n4.metric("Total Gap Qty", f"{total_gap:,.0f}")
+
+        st.write(f"**Allocation factor:** {allocation_factor:.3f}")
+
+        st.subheader("Constrained Facility Allocation Table")
+        st.dataframe(constrained_df, use_container_width=True)
+
+        constrained_csv = constrained_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download constrained allocation table as CSV",
+            data=constrained_csv,
+            file_name="constrained_allocation_table.csv",
+            mime="text/csv",
+        )
+
         st.subheader("District Aggregation")
 
         district_summary = (
-            planning_df.groupby(["district", "commodity_name"], as_index=False)
+            constrained_df.groupby(["district", "commodity_name"], as_index=False)
             .agg(
                 facilities=("facility_id", "nunique"),
                 total_latest_soh=("latest_soh", "sum"),
                 total_projected_end_month_soh=("projected_end_month_soh", "sum"),
                 total_recommended_qty=("recommended_qty", "sum"),
+                total_allocated_qty=("allocated_qty", "sum"),
+                total_gap_qty=("gap_qty", "sum"),
             )
         )
 
-        district_summary["total_latest_soh"] = district_summary["total_latest_soh"].round(2)
-        district_summary["total_projected_end_month_soh"] = district_summary["total_projected_end_month_soh"].round(2)
-        district_summary["total_recommended_qty"] = district_summary["total_recommended_qty"].round(2)
+        for col in [
+            "total_latest_soh",
+            "total_projected_end_month_soh",
+            "total_recommended_qty",
+            "total_allocated_qty",
+            "total_gap_qty",
+        ]:
+            district_summary[col] = district_summary[col].round(2)
 
         st.dataframe(district_summary, use_container_width=True)
 
@@ -547,4 +632,8 @@ with tab2:
 st.markdown("---")
 st.caption(
     "Important: This tool supports planning only. All recommendations require human review."
+)
+st.caption(
+    "Seasonality note: seasonality adjustment is not yet applied in this version. "
+    "When introduced later, LLINs and SP should remain unadjusted."
 )
