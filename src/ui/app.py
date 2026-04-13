@@ -569,7 +569,7 @@ st.download_button(
 
 st.subheader("District Aggregation")
 
-        district_summary = (
+    district_summary = (
             constrained_df.groupby(["district", "commodity_name"], as_index=False)
             .agg(
                 facilities=("facility_id", "nunique"),
