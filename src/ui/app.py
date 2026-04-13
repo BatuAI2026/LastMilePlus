@@ -25,13 +25,46 @@ st.write(
     "and reviewing Months of Stock (MOS) for health commodities."
 )
 
-sample_path = ROOT_DIR / "data" / "sample" / "sample_consumption.csv"
+st.subheader("Upload LMIS data")
 
-if not sample_path.exists():
-    st.error("Sample data file not found at data/sample/sample_consumption.csv")
+uploaded_file = st.file_uploader(
+    "Upload LMIS file (CSV or Excel)",
+    type=["csv", "xlsx"]
+)
+
+if uploaded_file is None:
+    st.info("Please upload an LMIS file to continue.")
     st.stop()
 
-df = pd.read_csv(sample_path)
+# Read file
+if uploaded_file.name.endswith(".csv"):
+    raw_df = pd.read_csv(uploaded_file)
+else:
+    raw_df = pd.read_excel(uploaded_file)
+
+# Select only trusted columns
+required_columns = {
+    "District": "district",
+    "Facility Code": "facility_id",
+    "Facility Name": "facility_name",
+    "Product Code": "commodity_id",
+    "Product": "commodity_name",
+    "Unit of Issue": "unit",
+    "Quantity Issued": "consumption",
+    "Closing balance (SOH)": "stock_on_hand"
+}
+
+# Keep only relevant columns
+df = raw_df[list(required_columns.keys())].copy()
+
+# Rename columns to app format
+df.rename(columns=required_columns, inplace=True)
+
+# Add dummy period (for now)
+df["period"] = "Latest"
+
+st.success("LMIS data loaded successfully")
+st.dataframe(df.head(20), use_container_width=True)
 
 # -----------------------------
 # Helper functions
