@@ -246,34 +246,66 @@ def build_planning_table(
     return planning_df
 
 
-def apply_national_stock_constraint(planning_df: pd.DataFrame, available_stock: float) -> pd.DataFrame:
+def assign_priority(projected_end_month_soh: float, amc: float) -> int:
     """
-    Apply a simple proportional allocation under national stock constraint.
+    Assign allocation priority based on projected MOS.
+    Lower projected MOS = higher priority.
+    """
+    projected_mos = calculate_mos(projected_end_month_soh, amc)
+
+    if projected_mos < 1:
+        return 1
+    elif projected_mos < 2:
+        return 2
+    elif projected_mos < 3:
+        return 3
+    else:
+        return 4
+
+
+def apply_priority_stock_constraint(planning_df: pd.DataFrame, available_stock: float) -> pd.DataFrame:
+    """
+    Allocate available national stock by priority:
+    Priority 1 first, then 2, then 3, then 4.
+    Within each priority, allocate in descending recommended quantity.
     """
     if planning_df.empty:
         return planning_df.copy()
 
     constrained_df = planning_df.copy()
-    total_recommended = float(constrained_df["recommended_qty"].sum())
 
-    if total_recommended <= 0:
-        constrained_df["allocated_qty"] = 0.0
-        constrained_df["gap_qty"] = 0.0
-        constrained_df["allocation_factor"] = 0.0
-        return constrained_df
+    constrained_df["priority"] = constrained_df.apply(
+        lambda row: assign_priority(
+            projected_end_month_soh=row["projected_end_month_soh"],
+            amc=row["amc"]
+        ),
+        axis=1
+    )
 
-    if available_stock >= total_recommended:
-        allocation_factor = 1.0
-    else:
-        allocation_factor = available_stock / total_recommended
+    constrained_df["allocated_qty"] = 0.0
+    constrained_df["gap_qty"] = constrained_df["recommended_qty"]
 
-    constrained_df["allocation_factor"] = allocation_factor
-    constrained_df["allocated_qty"] = (
-        constrained_df["recommended_qty"] * allocation_factor
-    ).round(0)
-    constrained_df["gap_qty"] = (
-        constrained_df["recommended_qty"] - constrained_df["allocated_qty"]
-    ).round(2)
+    constrained_df = constrained_df.sort_values(
+        by=["priority", "recommended_qty"],
+        ascending=[True, False]
+    ).reset_index(drop=True)
+
+    remaining_stock = float(available_stock)
+
+    for idx in constrained_df.index:
+        recommended = float(constrained_df.at[idx, "recommended_qty"])
+
+        if remaining_stock <= 0:
+            allocated = 0.0
+        else:
+            allocated = min(recommended, remaining_stock)
+
+        constrained_df.at[idx, "allocated_qty"] = round(allocated, 0)
+        constrained_df.at[idx, "gap_qty"] = round(recommended - allocated, 2)
+
+        remaining_stock -= allocated
+
+    constrained_df["remaining_stock_after_allocation"] = round(max(remaining_stock, 0), 2)
 
     return constrained_df
 
@@ -506,22 +538,23 @@ else:
             help="Available stock at national level for allocation to facilities."
         )
 
-        constrained_df = apply_national_stock_constraint(
-            planning_df=planning_df,
-            available_stock=available_national_stock,
-        )
+        constrained_df = apply_priority_stock_constraint(
+    planning_df=planning_df,
+    available_stock=available_national_stock,
+)
 
         total_allocated = float(constrained_df["allocated_qty"].sum())
         total_gap = float(constrained_df["gap_qty"].sum())
-        allocation_factor = float(constrained_df["allocation_factor"].iloc[0]) if not constrained_df.empty else 0.0
+        remaining_stock = float(constrained_df["remaining_stock_after_allocation"].iloc[0]) if not constrained_df.empty else 0.0
 
-        n1, n2, n3, n4 = st.columns(4)
-        n1.metric("Total Recommended Qty", f"{total_recommended:,.0f}")
-        n2.metric("Available National Stock", f"{available_national_stock:,.0f}")
-        n3.metric("Total Allocated Qty", f"{total_allocated:,.0f}")
-        n4.metric("Total Gap Qty", f"{total_gap:,.0f}")
+n1, n2, n3, n4, n5 = st.columns(5)
+n1.metric("Total Recommended Qty", f"{total_recommended:,.0f}")
+n2.metric("Available National Stock", f"{available_national_stock:,.0f}")
+n3.metric("Total Allocated Qty", f"{total_allocated:,.0f}")
+n4.metric("Total Gap Qty", f"{total_gap:,.0f}")
+n5.metric("Unallocated Stock Balance", f"{remaining_stock:,.0f}")
 
-        st.write(f"**Allocation factor:** {allocation_factor:.3f}")
+st.write("**Allocation method:** Priority-based allocation (lowest projected MOS first)")
 
         st.subheader("Constrained Facility Allocation Table")
         st.dataframe(constrained_df, use_container_width=True)
