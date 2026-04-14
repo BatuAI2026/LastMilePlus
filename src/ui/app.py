@@ -648,7 +648,19 @@ with col1:
     selected_facility = st.selectbox("Select facility", facility_options)
 
 with col2:
-    selected_commodity = st.selectbox("Select commodity", commodity_options)
+    select_all_commodities = st.checkbox("Select all commodities")
+
+    selected_commodities = st.multiselect(
+        "Select commodity/commodities",
+        options=commodity_options,
+        default=[commodity_options[0]] if commodity_options else []
+    )
+
+    if select_all_commodities:
+        selected_commodities = commodity_options
+
+# Keep one primary commodity for detailed views
+selected_commodity = selected_commodities[0] if selected_commodities else None
 
 filtered = df[
     (df["facility_name"] == selected_facility) &
