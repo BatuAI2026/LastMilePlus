@@ -71,34 +71,22 @@ LMIS_PRODUCT_MAP = {
 # Helper functions
 # -------------------------------------------------------------------
 def standardize_product_fields(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add standardized product name based on LMIS product code.
-    """
     df = df.copy()
-
     if "commodity_id" in df.columns:
         df["commodity_id"] = df["commodity_id"].astype(str).str.strip()
         df["standard_product_name"] = df["commodity_id"].map(LMIS_PRODUCT_MAP)
         df["standard_product_name"] = df["standard_product_name"].fillna(df["commodity_name"])
-
     return df
 
 
 def standardize_warehouse_product_fields(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add standardized warehouse product field.
-    If product_code exists, use LMIS_PRODUCT_MAP.
-    Otherwise fall back to product_name.
-    """
     df = df.copy()
-
     if "product_code" in df.columns:
         df["product_code"] = df["product_code"].astype(str).str.strip()
         df["standard_product_name"] = df["product_code"].map(LMIS_PRODUCT_MAP)
         df["standard_product_name"] = df["standard_product_name"].fillna(df["product_name"])
     else:
         df["standard_product_name"] = df["product_name"]
-
     return df
 
 
@@ -108,9 +96,6 @@ def create_excel_workbook(
     district_summary: pd.DataFrame,
     fefo_df: pd.DataFrame
 ) -> bytes:
-    """
-    Create an Excel workbook with multiple sheets.
-    """
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -156,7 +141,6 @@ def standardize_lmis_columns(raw_df: pd.DataFrame) -> pd.DataFrame:
         df[col] = df[col].astype(str).str.strip()
 
     df = standardize_product_fields(df)
-
     return df
 
 
@@ -204,7 +188,6 @@ def load_history_file(history_file: Path) -> pd.DataFrame:
         history_df[col] = history_df[col].astype(str).str.strip()
 
     history_df = standardize_product_fields(history_df)
-
     return history_df
 
 
@@ -251,7 +234,6 @@ def clean_warehouse_data(raw_df: pd.DataFrame) -> pd.DataFrame:
     df = df[df["available_qty"] > 0].copy()
 
     df = standardize_warehouse_product_fields(df)
-
     df = df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
     return df
 
@@ -453,10 +435,6 @@ def filter_matching_warehouse_stock(
     selected_commodity: str,
     selected_standard_name: str
 ) -> pd.DataFrame:
-    """
-    Prefer standardized product matching.
-    Fall back to product_name contains if needed.
-    """
     if warehouse_df.empty:
         return warehouse_df.copy()
 
@@ -473,11 +451,21 @@ def filter_matching_warehouse_stock(
     return stock_df
 
 
+def build_source_guidance(cycle_distributor: str, source_warehouse: str) -> str:
+    cycle_distributor = str(cycle_distributor).strip()
+    source_warehouse = str(source_warehouse).strip()
+
+    if cycle_distributor.lower() == source_warehouse.lower():
+        return f"{cycle_distributor} to distribute from own warehouse"
+    return f"{cycle_distributor} to collect from {source_warehouse}"
+
+
 def apply_fefo_collection_guidance(
     constrained_df: pd.DataFrame,
     warehouse_df: pd.DataFrame,
     selected_commodity: str,
     selected_standard_name: str,
+    cycle_distributor: str,
 ) -> pd.DataFrame:
     """
     Assign allocated facility quantities to warehouse batches using FEFO.
@@ -516,6 +504,7 @@ def apply_fefo_collection_guidance(
         while needed_qty > 0 and stock_idx < len(stock_df):
             batch_row = stock_df.loc[stock_idx]
             allocate_qty = min(needed_qty, remaining_batch_qty)
+            source_warehouse = batch_row["warehouse_name"]
 
             allocations.append(
                 {
@@ -527,11 +516,13 @@ def apply_fefo_collection_guidance(
                     "standard_product_name": facility_row["standard_product_name"],
                     "allocated_qty_to_facility": round(float(facility_row["allocated_qty"]), 2),
                     "priority": int(facility_row["priority"]),
-                    "source_warehouse": batch_row["warehouse_name"],
+                    "cycle_distributor": cycle_distributor,
+                    "source_warehouse": source_warehouse,
                     "batch_no": batch_row["batch_no"],
                     "expiry_date": batch_row["expiry_date"].strftime("%Y-%m-%d"),
                     "batch_allocated_qty": round(float(allocate_qty), 2),
-                    "collection_note": f"To be collected from {batch_row['warehouse_name']}",
+                    "collection_note": f"To be collected from {source_warehouse}",
+                    "source_guidance": build_source_guidance(cycle_distributor, source_warehouse),
                 }
             )
 
@@ -870,6 +861,18 @@ else:
         st.dataframe(district_summary, use_container_width=True)
 
         # ---------------------------------------------------------------
+        # Cycle Distributor and Source-Warehouse Guidance
+        # ---------------------------------------------------------------
+        st.subheader("Cycle Distributor and Source Guidance")
+
+        cycle_distributor = st.selectbox(
+            "Select distributing agent for this cycle",
+            options=["CML", "AGL", "Other"],
+            index=0,
+            help="Choose the distributing agent responsible for this cycle."
+        )
+
+        # ---------------------------------------------------------------
         # FEFO Warehouse Collection Guidance with Batch Traceability
         # ---------------------------------------------------------------
         st.subheader("FEFO Warehouse Collection Guidance")
@@ -882,6 +885,7 @@ else:
                 warehouse_df=warehouse_df,
                 selected_commodity=selected_commodity,
                 selected_standard_name=selected_standard_name,
+                cycle_distributor=cycle_distributor,
             )
 
             if fefo_df.empty:
