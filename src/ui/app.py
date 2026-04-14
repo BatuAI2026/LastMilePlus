@@ -73,10 +73,9 @@ LMIS_PRODUCT_MAP = {
     "PMI0006": "Rectal Artesunate 100mg, suppository",
 }
 
-# ------------------------------------------------------------
+# -------------------------------------------------------------------
 # Helper functions
-# ------------------------------------------------------------
-
+# -------------------------------------------------------------------
 def map_product(row):
     code = str(row.get("commodity_id")).strip()
 
@@ -118,6 +117,24 @@ def standardize_product_fields(df: pd.DataFrame) -> pd.DataFrame:
         df["commodity_name"] = df["commodity_name"].astype(str).str.strip()
 
     df["standard_product_name"] = df.apply(map_product, axis=1)
+
+    return df
+
+
+def standardize_warehouse_product_fields(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add standardized warehouse product field.
+    If product_code exists, use LMIS_PRODUCT_MAP.
+    Otherwise fall back to product_name.
+    """
+    df = df.copy()
+
+    if "product_code" in df.columns:
+        df["product_code"] = df["product_code"].astype(str).str.strip()
+        df["standard_product_name"] = df["product_code"].map(LMIS_PRODUCT_MAP)
+        df["standard_product_name"] = df["standard_product_name"].fillna(df["product_name"])
+    else:
+        df["standard_product_name"] = df["product_name"]
 
     return df
 
@@ -402,7 +419,7 @@ def build_planning_table(
 
     if not planning_df.empty:
         planning_df = planning_df.sort_values(
-            ["district", "facility_name"]
+            ["district", "facility_name", "standard_product_name"]
         ).reset_index(drop=True)
 
     return planning_df
@@ -499,10 +516,6 @@ def apply_fefo_collection_guidance(
     selected_standard_name: str,
     cycle_distributor: str,
 ) -> pd.DataFrame:
-    """
-    Assign allocated facility quantities to warehouse batches using FEFO.
-    Returns batch-level traceability guidance.
-    """
     if constrained_df.empty or warehouse_df.empty:
         return pd.DataFrame()
 
@@ -685,13 +698,12 @@ with col2:
     if select_all_commodities:
         selected_commodities = commodity_options
 
-# Keep one primary commodity for detailed views
 selected_commodity = selected_commodities[0] if selected_commodities else None
 
 filtered = df[
     (df["facility_name"] == selected_facility) &
     (df["commodity_name"] == selected_commodity)
-].copy()
+].copy() if selected_commodity else pd.DataFrame()
 
 filtered = filtered.sort_values("period_date").reset_index(drop=True)
 
@@ -702,23 +714,26 @@ selected_standard_name = (
 )
 
 st.subheader("Historical records")
-st.dataframe(
-    filtered[
-        [
-            "period",
-            "district",
-            "facility_id",
-            "facility_name",
-            "commodity_id",
-            "commodity_name",
-            "standard_product_name",
-            "unit",
-            "consumption",
-            "stock_on_hand",
-        ]
-    ],
-    use_container_width=True
-)
+if filtered.empty:
+    st.info("No historical records found for the selected facility and commodity.")
+else:
+    st.dataframe(
+        filtered[
+            [
+                "period",
+                "district",
+                "facility_id",
+                "facility_name",
+                "commodity_id",
+                "commodity_name",
+                "standard_product_name",
+                "unit",
+                "consumption",
+                "stock_on_hand",
+            ]
+        ],
+        use_container_width=True
+    )
 
 facility_id = filtered["facility_id"].iloc[0] if not filtered.empty else None
 commodity_id = filtered["commodity_id"].iloc[0] if not filtered.empty else None
@@ -808,9 +823,9 @@ else:
 # -------------------------------------------------------------------
 # Planning Table + Priority Allocation + FEFO Guidance
 # -------------------------------------------------------------------
-st.subheader("Planning Table for Selected Product")
+st.subheader("Planning Table for Selected Product(s)")
 
-product_df = df[df["commodity_name"] == selected_commodity].copy()
+product_df = df[df["commodity_name"].isin(selected_commodities)].copy() if selected_commodities else pd.DataFrame()
 
 if product_df.empty:
     st.warning("No product-level records found.")
@@ -840,10 +855,10 @@ else:
         total_recommended = float(planning_df["recommended_qty"].sum())
 
         available_national_stock = st.number_input(
-            "Enter available national stock for this product",
+            "Enter available national stock for this product/group",
             min_value=0.0,
             value=total_recommended,
-            help="Available stock at national level for allocation to facilities."
+            help="Available stock at national level for allocation."
         )
 
         constrained_df = apply_priority_stock_constraint(
@@ -882,7 +897,7 @@ else:
         st.subheader("District Aggregation")
 
         district_summary = (
-            constrained_df.groupby(["district", "commodity_name"], as_index=False)
+            constrained_df.groupby(["district", "standard_product_name"], as_index=False)
             .agg(
                 facilities=("facility_id", "nunique"),
                 total_latest_soh=("latest_soh", "sum"),
@@ -904,9 +919,6 @@ else:
 
         st.dataframe(district_summary, use_container_width=True)
 
-        # ---------------------------------------------------------------
-        # Cycle Distributor and Source-Warehouse Guidance
-        # ---------------------------------------------------------------
         st.subheader("Cycle Distributor and Source Guidance")
 
         cycle_distributor = st.selectbox(
@@ -916,16 +928,15 @@ else:
             help="Choose the distributing agent responsible for this cycle."
         )
 
-        # ---------------------------------------------------------------
-        # FEFO Warehouse Collection Guidance with Batch Traceability
-        # ---------------------------------------------------------------
         st.subheader("FEFO Warehouse Collection Guidance")
 
         if warehouse_df.empty:
             st.info("Upload cleaned warehouse stock data to enable FEFO warehouse collection guidance.")
+        elif selected_commodity is None:
+            st.info("Select at least one commodity to enable FEFO guidance.")
         else:
             fefo_df = apply_fefo_collection_guidance(
-                constrained_df=constrained_df,
+                constrained_df=constrained_df[constrained_df["commodity_name"] == selected_commodity].copy(),
                 warehouse_df=warehouse_df,
                 selected_commodity=selected_commodity,
                 selected_standard_name=selected_standard_name,
@@ -934,7 +945,7 @@ else:
 
             if fefo_df.empty:
                 st.warning(
-                    "No matching warehouse stock rows found for the selected product. "
+                    "No matching warehouse stock rows found for the selected primary commodity. "
                     "Check product naming consistency between LMIS and warehouse data."
                 )
             else:
@@ -948,9 +959,6 @@ else:
                     mime="text/csv",
                 )
 
-        # ---------------------------------------------------------------
-        # Excel Export
-        # ---------------------------------------------------------------
         st.subheader("Excel Export")
 
         excel_bytes = create_excel_workbook(
