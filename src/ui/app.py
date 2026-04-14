@@ -54,17 +54,22 @@ MOS_SCENARIOS = {
 }
 
 LMIS_PRODUCT_MAP = {
-    "BB006000": "Artesunate injection 60mg/ml, 1ML",
-    "TBA4": "Artesunate injection 120mg/ml, PFR",
-    "GF0561": "Artesunate 50mg + Amodiaquine 135mg (3 Tabs)",
-    "GF0562": "Artesunate 100mg + Amodiaquine 270mg (3 Tabs)",
-    "GF0563": "Artesunate 100mg + Amodiaquine 270mg (6 Tabs)",
-    "GF5637": "Dihydroartemisinin 20mg / Piperaquine 160mg",
-    "GF5639": "Dihydroartemisinin 60mg / Piperaquine 480mg",
-    "GF5640": "Dihydroartemisinin 80mg / Piperaquine 640mg",
-    "PMI0004": "Long Lasting Insecticidal Net (LLIN)",
+    "BB006000": "Artesunate injection 60mg/ml,1ML",
+    "TBA4": "Artesunate injection 120mg/ml,PFR",
+    "GF0561": "Artesunate 50mg+Amodiaquine 135mg 3 Tablets/blister",
+    "GF0562": "Artesunate 100mg+Amodiaquine 270mg 3 Tablets/blister",
+    "GF5637": "Dihydroartemisinin 20mg/Piperaquine160mg(DP)",
+    "GF0563": "Artesunate 100mg+Amodiaquine 270mg 6 Tablets/blister",
+    "PMI0004": "Long Lasting Insecticidal Net(LLIN)",
+    "GF5639": "Dihydroartemisinin 60mg/Piperaquine 480mg(DP)",
+    "GF5640": "Dihydroartemisinin 80mg/Piperaquine 640mg(DP)",
     "DN002900": "Malaria Rapid Diagnostic Test (MRDT) Kits",
-    "AA058200": "Sulphadoxine / Pyrimethamine (SP) tablets",
+    "AA058200": "Sulphadoxine 500mg / pyrimethamine 25mg (SP), tablets",
+    "AA039600": "Lumefantrine 120mg/Artemether 20mg,6x1",
+    "GF5638": "Dihydroartemisinin 40mg/Piperaquine 320mg (DP)",
+    "AA039900": "Lumefantrine 120mg/Artemether 20mg, 6x2",
+    "AA040200": "Lumefantrine 120mg/Artemether 20mg,  6x3",
+    "AA040500": "Lumefantrine 120mg/Artemether 20mg, 6x4",
 }
 
 # -------------------------------------------------------------------
