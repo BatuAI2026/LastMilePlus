@@ -70,6 +70,7 @@ LMIS_PRODUCT_MAP = {
     "AA039900": "Lumefantrine 120mg/Artemether 20mg, 6x2",
     "AA040200": "Lumefantrine 120mg/Artemether 20mg,  6x3",
     "AA040500": "Lumefantrine 120mg/Artemether 20mg, 6x4",
+    "PMI0006": "Rectal Artesunate 100mg, suppository",
 }
 
 # -------------------------------------------------------------------
