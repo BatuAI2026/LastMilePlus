@@ -110,11 +110,15 @@ def map_product(row):
 
 def standardize_product_fields(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    if "product_code" in df.columns:
-        df["product_code"] = df["product_code"].astype(str).str.strip()
-df["standard_product_name"] = df.apply(map_product, axis=1)
-    else:
-        df["standard_product_name"] = df["product_name"]
+
+    if "commodity_id" in df.columns:
+        df["commodity_id"] = df["commodity_id"].astype(str).str.strip()
+
+    if "commodity_name" in df.columns:
+        df["commodity_name"] = df["commodity_name"].astype(str).str.strip()
+
+    df["standard_product_name"] = df.apply(map_product, axis=1)
+
     return df
 
 
