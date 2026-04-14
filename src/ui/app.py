@@ -73,24 +73,46 @@ LMIS_PRODUCT_MAP = {
     "PMI0006": "Rectal Artesunate 100mg, suppository",
 }
 
-# -------------------------------------------------------------------
+# ------------------------------------------------------------
 # Helper functions
-# -------------------------------------------------------------------
+# ------------------------------------------------------------
+
+def map_product(row):
+    code = str(row.get("commodity_id")).strip()
+
+    # 1. First priority: exact code match
+    if code in LMIS_PRODUCT_MAP:
+        return LMIS_PRODUCT_MAP[code]
+
+    name = str(row.get("commodity_name")).lower()
+
+    # Lumefantrine/Artemether (LA)
+    if "lumefantrine" in name or "artemether" in name:
+        if "6x1" in name or "30 x 6" in name or "30x6" in name:
+            return "Lumefantrine 120mg/Artemether 20mg,6x1"
+        elif "6x2" in name or "30 x 12" in name or "30x12" in name:
+            return "Lumefantrine 120mg/Artemether 20mg, 6x2"
+        elif "6x3" in name or "30 x 18" in name or "30x18" in name:
+            return "Lumefantrine 120mg/Artemether 20mg,  6x3"
+        elif "6x4" in name or "30 x 24" in name or "30x24" in name:
+            return "Lumefantrine 120mg/Artemether 20mg, 6x4"
+
+    # LLIN
+    if "llin" in name or "net" in name:
+        return "Long Lasting Insecticidal Net(LLIN)"
+
+    # MRDT
+    if "rdt" in name:
+        return "Malaria Rapid Diagnostic Test (MRDT) Kits"
+
+    return row.get("commodity_name")
+
+
 def standardize_product_fields(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if "commodity_id" in df.columns:
-        df["commodity_id"] = df["commodity_id"].astype(str).str.strip()
-        df["standard_product_name"] = df["commodity_id"].map(LMIS_PRODUCT_MAP)
-        df["standard_product_name"] = df["standard_product_name"].fillna(df["commodity_name"])
-    return df
-
-
-def standardize_warehouse_product_fields(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "product_code" in df.columns:
         df["product_code"] = df["product_code"].astype(str).str.strip()
-        df["standard_product_name"] = df["product_code"].map(LMIS_PRODUCT_MAP)
-        df["standard_product_name"] = df["standard_product_name"].fillna(df["product_name"])
+df["standard_product_name"] = df.apply(map_product, axis=1)
     else:
         df["standard_product_name"] = df["product_name"]
     return df
