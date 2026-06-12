@@ -543,8 +543,7 @@ stock_df = filter_matching_warehouse_stock(
     selected_standard_name=selected_standard_name,
     selected_code=facility_df["commodity_id"].iloc[0]
 )
-    )
-
+  
     if stock_df.empty:
         return pd.DataFrame()
 
