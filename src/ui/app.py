@@ -542,22 +542,20 @@ def apply_fefo_collection_guidance(
 ) -> pd.DataFrame:
     if constrained_df.empty or warehouse_df.empty:
         return pd.DataFrame()
-
-stock_df = filter_matching_warehouse_stock(
-    warehouse_df=warehouse_df,
-    selected_commodity=selected_commodity,
-    selected_standard_name=selected_standard_name,
-    selected_code=selected_commodity
-)
-    )
-
-    if stock_df.empty:
-        return pd.DataFrame()
-
     facility_df = constrained_df.copy()
     facility_df = facility_df[facility_df["allocated_qty"] > 0].copy()
 
     if facility_df.empty:
+        return pd.DataFrame()
+stock_df = filter_matching_warehouse_stock(
+    warehouse_df=warehouse_df,
+    selected_commodity=selected_commodity,
+    selected_standard_name=selected_standard_name,
+    selected_code=facility_df["commodity_id"].iloc[0]
+)
+    )
+
+    if stock_df.empty:
         return pd.DataFrame()
 
     facility_df = facility_df.sort_values(
