@@ -482,12 +482,36 @@ def apply_priority_stock_constraint(planning_df: pd.DataFrame, available_stock: 
 def filter_matching_warehouse_stock(
     warehouse_df: pd.DataFrame,
     selected_commodity: str,
-    selected_standard_name: str
+    selected_standard_name: str,
+    selected_code: str
 ) -> pd.DataFrame:
-    if warehouse_df.empty:
-        return warehouse_df.copy()
+    # Primary match = product code
 
+stock_df = warehouse_df[
+    warehouse_df["product_code"].astype(str).str.strip()
+    == str(selected_code).strip()
+].copy()
+
+# Fallback 1 = standard name
+
+if stock_df.empty:
     stock_df = warehouse_df[
+        warehouse_df["standard_product_name"].astype(str).str.strip()
+        == str(selected_standard_name).strip()
+    ].copy()
+
+# Fallback 2 = product name contains commodity text
+
+if stock_df.empty:
+    stock_df = warehouse_df[
+        warehouse_df["product_name"].astype(str).str.contains(
+            str(selected_commodity),
+            case=False,
+            na=False
+        )
+    ].copy()
+
+return stock_df = warehouse_df[
         warehouse_df["standard_product_name"].astype(str).str.strip() == str(selected_standard_name).strip()
     ].copy()
 
@@ -519,10 +543,12 @@ def apply_fefo_collection_guidance(
     if constrained_df.empty or warehouse_df.empty:
         return pd.DataFrame()
 
-    stock_df = filter_matching_warehouse_stock(
-        warehouse_df=warehouse_df,
-        selected_commodity=selected_commodity,
-        selected_standard_name=selected_standard_name,
+stock_df = filter_matching_warehouse_stock(
+    warehouse_df=warehouse_df,
+    selected_commodity=selected_commodity,
+    selected_standard_name=selected_standard_name,
+    selected_code=selected_row["commodity_id"]
+)
     )
 
     if stock_df.empty:
