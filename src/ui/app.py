@@ -537,12 +537,12 @@ def apply_fefo_collection_guidance(
 
     if facility_df.empty:
         return pd.DataFrame()
-stock_df = filter_matching_warehouse_stock(
-    warehouse_df=warehouse_df,
-    selected_commodity=selected_commodity,
-    selected_standard_name=selected_standard_name,
-    selected_code=facility_df["commodity_id"].iloc[0]
-)
+    stock_df = filter_matching_warehouse_stock(
+        warehouse_df=warehouse_df,
+        selected_commodity=selected_commodity,
+        selected_standard_name=selected_standard_name,
+        selected_code=facility_df["commodity_id"].iloc[0]
+    )
   
     if stock_df.empty:
         return pd.DataFrame()
