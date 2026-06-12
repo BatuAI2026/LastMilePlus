@@ -547,7 +547,7 @@ stock_df = filter_matching_warehouse_stock(
     warehouse_df=warehouse_df,
     selected_commodity=selected_commodity,
     selected_standard_name=selected_standard_name,
-    selected_code=selected_row["commodity_id"]
+    selected_code=selected_commodity
 )
     )
 
