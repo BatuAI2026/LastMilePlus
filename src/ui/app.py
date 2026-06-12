@@ -485,44 +485,34 @@ def filter_matching_warehouse_stock(
     selected_standard_name: str,
     selected_code: str
 ) -> pd.DataFrame:
-    # Primary match = product code
+    if warehouse_df.empty:
+        return warehouse_df.copy()
 
-stock_df = warehouse_df[
-    warehouse_df["product_code"].astype(str).str.strip()
-    == str(selected_code).strip()
-].copy()
-
-# Fallback 1 = standard name
-
-if stock_df.empty:
     stock_df = warehouse_df[
-        warehouse_df["standard_product_name"].astype(str).str.strip()
-        == str(selected_standard_name).strip()
-    ].copy()
-
-# Fallback 2 = product name contains commodity text
-
-if stock_df.empty:
-    stock_df = warehouse_df[
-        warehouse_df["product_name"].astype(str).str.contains(
-            str(selected_commodity),
-            case=False,
-            na=False
-        )
-    ].copy()
-
-return stock_df = warehouse_df[
-        warehouse_df["standard_product_name"].astype(str).str.strip() == str(selected_standard_name).strip()
+        warehouse_df["product_code"].astype(str).str.strip()
+        == str(selected_code).strip()
     ].copy()
 
     if stock_df.empty:
         stock_df = warehouse_df[
-            warehouse_df["product_name"].str.contains(selected_commodity, case=False, na=False)
+            warehouse_df["standard_product_name"].astype(str).str.strip()
+            == str(selected_standard_name).strip()
         ].copy()
 
-    stock_df = stock_df.sort_values(["expiry_date", "warehouse_name", "batch_no"]).reset_index(drop=True)
-    return stock_df
+    if stock_df.empty:
+        stock_df = warehouse_df[
+            warehouse_df["product_name"].astype(str).str.contains(
+                str(selected_commodity),
+                case=False,
+                na=False
+            )
+        ].copy()
 
+    stock_df = stock_df.sort_values(
+        ["expiry_date", "warehouse_name", "batch_no"]
+    ).reset_index(drop=True)
+
+    return stock_df
 
 def build_source_guidance(cycle_distributor: str, source_warehouse: str) -> str:
     cycle_distributor = str(cycle_distributor).strip()
